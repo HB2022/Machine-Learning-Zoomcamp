@@ -1,63 +1,68 @@
-# Homework 8: Neural Networks and Deep Learning
+## Homework 8: Neural Networks and Deep Learning
 
-**Cohort:** ML Zoomcamp 2026
-
-This repository contains my submission for Homework 8. I followed the instructions exactly, using the fixed dataset, environment, reproducibility rules, and reference architecture. All code below was executed interactively in the terminal.
-
-## Environment Setup
-
-I installed the exact CPU wheels specified in `requirements-cpu.txt`:
-
-```text
-torch==2.9.0+cpu
-torchvision==0.24.0+cpu
-numpy==2.3.3
-Pillow==11.3.0
-```
-
-Verification:
-
-```text
-torch: 2.9.0+cpu
-torchvision: 0.24.0+cpu
-numpy: 2.3.3
-Pillow: 11.3.0
-```
+In this homework we build a small PyTorch model that classifies curly and
+straight hair. The 2026 reference setup freezes the dataset, framework
+versions, architecture, split, random seed, and evaluation procedure. These
+settings make the experiment reproducible while still showing why augmentation
+can change a model's behavior.
 
 ## Dataset
 
-I downloaded the fixed dataset and verified the checksum:
+Download the fixed archive:
 
-```powershell
-Invoke-WebRequest -Uri "[https://github.com/SVizor42/ML_Zoomcamp/releases/download/straight-curly-data/data.zip](https://github.com/SVizor42/ML_Zoomcamp/releases/download/straight-curly-data/data.zip)" -OutFile "data.zip"
-(Get-FileHash .\data.zip -Algorithm SHA256).Hash.ToLower()
+```bash
+wget https://github.com/SVizor42/ML_Zoomcamp/releases/download/straight-curly-data/data.zip
+sha256sum data.zip
+unzip -q data.zip
 ```
 
-Checksum Output:
+The checksum must be:
 
 ```text
-9e53453e3017502f22860cb08558f0cdb343e102fb61feab75960616185e7d67
+9e53453e3017502f22860cb08558f0cdb343e102fb61feab75960616185e7d67  data.zip
 ```
 
-Class counts verified:
-- **Train:** 800 images
-- **Held-out evaluation:** 201 images
-- **Class mapping:** `{'curly': 0, 'straight': 1}`
+The archive contains a fixed training split and a fixed held-out evaluation
+split. It has 1,002 image files. One GIF is kept in the archive for provenance
+but `ImageFolder` ignores it, so the training run consumes 1,001 images:
 
-## Reproducibility Rules and Data Loading
+| Split | Curly | Straight | Total |
+| --- | ---: | ---: | ---: |
+| Train | 410 | 390 | 800 |
+| Held-out evaluation | 103 | 98 | 201 |
 
-I set all seeds and configured PyTorch for deterministic execution before constructing any datasets, loaders, or models.
+`torchvision.datasets.ImageFolder` assigns `curly=0` and `straight=1` because
+the class directories are sorted alphabetically. Do not create another random
+train/test split and do not augment the held-out evaluation images.
+
+## Environment
+
+For the reference run, use Python 3.11 and CPU wheels:
+
+```bash
+python -m pip install -r requirements-cpu.txt
+```
+
+The important CPU wheels are `torch==2.9.0+cpu` and
+`torchvision==0.24.0+cpu`. Also use
+`numpy==2.3.3`, and `Pillow==11.3.0`. The CPU reference defines the grading
+baseline. You can experiment on a GPU, but report the CPU run for the numeric
+questions.
+
+The directory also contains `reference_train.py`. After extracting the archive,
+run `python reference_train.py --data-dir data` to produce both history files
+with the complete reference procedure.
+
+## Reproducibility rules
+
+Run this before constructing datasets, data loaders, the model, or the
+optimizer:
 
 ```python
 import random
+
 import numpy as np
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-import json
-import statistics
-from pathlib import Path
 
 SEED = 42
 random.seed(SEED)
@@ -66,29 +71,57 @@ torch.manual_seed(SEED)
 torch.use_deterministic_algorithms(True)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
+
 device = torch.device("cpu")
-
-baseline_transform = transforms.Compose([
-    transforms.Resize((200, 200), interpolation=transforms.InterpolationMode.BILINEAR),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-
-train_dir = Path("data/train")
-eval_dir = Path("data/test")
-
-train_dataset = datasets.ImageFolder(train_dir, transform=baseline_transform)
-eval_dataset = datasets.ImageFolder(eval_dir, transform=baseline_transform)
-
-loader_generator = torch.Generator().manual_seed(SEED)
-
-train_loader = DataLoader(train_dataset, batch_size=20, shuffle=True, num_workers=0, generator=loader_generator)
-eval_loader = DataLoader(eval_dataset, batch_size=20, shuffle=False, num_workers=0)
 ```
 
-## Model Architecture and Q1/Q2
+Use `num_workers=0` for both loaders. Give the training loader its own fixed
+generator:
 
 ```python
+loader_generator = torch.Generator().manual_seed(SEED)
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=20,
+    shuffle=True,
+    num_workers=0,
+    generator=loader_generator,
+)
+evaluation_loader = DataLoader(
+    evaluation_dataset,
+    batch_size=20,
+    shuffle=False,
+    num_workers=0,
+)
+```
+
+These settings remove the worker-order and GPU/cuDNN differences that made the
+2025 scalar answers move between runs.
+
+## Model and preprocessing
+
+Use this transform for the baseline training set and, separately, for the
+held-out evaluation set:
+
+```python
+from torchvision import transforms
+
+evaluation_transform = transforms.Compose([
+    transforms.Resize((200, 200), interpolation=transforms.InterpolationMode.BILINEAR),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+    ),
+])
+```
+
+Create the model with exactly this structure:
+
+```python
+import torch.nn as nn
+
+
 class HairModel(nn.Module):
     def __init__(self):
         super().__init__()
@@ -102,168 +135,166 @@ class HairModel(nn.Module):
         x = x.flatten(start_dim=1)
         x = nn.functional.relu(self.hidden(x))
         return self.output(x)
-
-model = HairModel().to(device)
-criterion = nn.BCEWithLogitsLoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=0.002, momentum=0.8)
-
-total_params = sum(p.numel() for p in model.parameters())
 ```
 
-### Question 1
-**Answer:** `nn.BCEWithLogitsLoss()`  
-The model returns raw logits. `BCEWithLogitsLoss` combines a Sigmoid layer and `BCELoss` in one single class, which is more numerically stable.
+The model returns logits. Use `nn.BCEWithLogitsLoss()` and apply
+`torch.sigmoid` only when calculating predictions or serving the model. Do not
+put a sigmoid module in `HairModel` as well; applying it twice was an
+ambiguity in the previous assignment.
 
-### Question 2
-**Answer:** `20073473`
-
-## Baseline Training (10 Epochs) and Q3/Q4
+Use this optimizer and loss:
 
 ```python
-def evaluate(model, loader, criterion, device):
-    model.eval()
-    loss_sum, correct, total = 0.0, 0, 0
-    with torch.no_grad():
-        for images, labels in loader:
-            images, labels = images.to(device), labels.to(device)
-            labels = labels.float().unsqueeze(1)
-            logits = model(images)
-            loss = criterion(logits, labels)
-            loss_sum += loss.item() * images.size(0)
-            correct += ((torch.sigmoid(logits) >= 0.5) == labels).sum().item()
-            total += labels.size(0)
-    return loss_sum / total, correct / total
-
-history_baseline = {"train_loss": [], "train_accuracy": [], "evaluation_loss": [], "evaluation_accuracy": []}
-
-for epoch in range(10):
-    model.train()
-    train_loss_sum, train_correct, train_total = 0.0, 0, 0
-    for images, labels in train_loader:
-        images, labels = images.to(device), labels.to(device)
-        labels = labels.float().unsqueeze(1)
-        optimizer.zero_grad()
-        logits = model(images)
-        loss = criterion(logits, labels)
-        loss.backward()
-        optimizer.step()
-        train_loss_sum += loss.item() * images.size(0)
-        train_correct += ((torch.sigmoid(logits) >= 0.5) == labels).sum().item()
-        train_total += labels.size(0)
-        
-    epoch_train_loss = train_loss_sum / train_total
-    epoch_train_acc = train_correct / train_total
-    epoch_eval_loss, epoch_eval_acc = evaluate(model, eval_loader, criterion, device)
-    
-    history_baseline["train_loss"].append(epoch_train_loss)
-    history_baseline["train_accuracy"].append(epoch_train_acc)
-    history_baseline["evaluation_loss"].append(epoch_eval_loss)
-    history_baseline["evaluation_accuracy"].append(epoch_eval_acc)
-    print(f"Epoch {epoch+1}/10 | Train Loss: {epoch_train_loss:.4f} | Train Acc: {epoch_train_acc:.4f} | Eval Loss: {epoch_eval_loss:.4f} | Eval Acc: {epoch_eval_acc:.4f}")
+criterion = nn.BCEWithLogitsLoss()
+optimizer = torch.optim.SGD(
+    model.parameters(),
+    lr=0.002,
+    momentum=0.8,
+)
 ```
 
-```text
-Epoch 1/10 | Train Loss: 0.6385 | Train Acc: 0.6450 | Eval Loss: 0.6010 | Eval Acc: 0.6567
-Epoch 2/10 | Train Loss: 0.5441 | Train Acc: 0.7175 | Eval Loss: 0.6003 | Eval Acc: 0.6517
-Epoch 3/10 | Train Loss: 0.4955 | Train Acc: 0.7550 | Eval Loss: 0.6405 | Eval Acc: 0.6219
-Epoch 4/10 | Train Loss: 0.4330 | Train Acc: 0.7913 | Eval Loss: 0.6274 | Eval Acc: 0.6915
-Epoch 5/10 | Train Loss: 0.4048 | Train Acc: 0.8087 | Eval Loss: 0.6293 | Eval Acc: 0.6617
-Epoch 6/10 | Train Loss: 0.3953 | Train Acc: 0.8075 | Eval Loss: 0.6332 | Eval Acc: 0.7114
-Epoch 7/10 | Train Loss: 0.3437 | Train Acc: 0.8363 | Eval Loss: 0.6895 | Eval Acc: 0.6716
-Epoch 8/10 | Train Loss: 0.2806 | Train Acc: 0.8850 | Eval Loss: 0.6497 | Eval Acc: 0.7214
-Epoch 9/10 | Train Loss: 0.2236 | Train Acc: 0.9100 | Eval Loss: 0.7114 | Eval Acc: 0.7164
-Epoch 10/10 | Train Loss: 0.1584 | Train Acc: 0.9387 | Eval Loss: 1.0212 | Eval Acc: 0.6368
+## Question 1 — loss and output contract
+
+Which loss matches the model above?
+
+- `nn.MSELoss()`
+- `nn.BCEWithLogitsLoss()`
+- `nn.CrossEntropyLoss()`
+- `nn.CosineEmbeddingLoss()`
+
+There is one intended answer: the model emits one logit and the loss applies the
+stable sigmoid-plus-binary-cross-entropy operation.
+
+## Question 2 — parameter count
+
+What is the total number of trainable parameters? Count biases as well and use
+`sum(p.numel() for p in model.parameters())`.
+
+- `896`
+- `11214912`
+- `15896912`
+- `20073473`
+
+## Training metrics
+
+Train for 10 epochs with the baseline transform. For every epoch, evaluate the
+held-out split with `model.eval()` and `torch.no_grad()`. Store these four
+series in a JSON file named `history_baseline.json`:
+
+```python
+{
+    "train_loss": [...],
+    "train_accuracy": [...],
+    "evaluation_loss": [...],
+    "evaluation_accuracy": [...],
+}
 ```
 
-### Question 3
-**Answer:** `0.81` (Median of `train_accuracy`)
+For accuracy, use `(torch.sigmoid(logits) >= 0.5)`. Use the number of examples,
+not the number of batches, when averaging loss and accuracy.
 
-### Question 4
-**Answer:** `0.139` (`np.std(train_loss, ddof=0)`)
+## Question 3 — baseline accuracy
 
-## Data Augmentation (10 Epochs) and Q5/Q6
+Calculate the median of `train_accuracy` in `history_baseline.json`. Submit the
+value rounded to two decimal places. The grader accepts an absolute error of
+`0.05`; the answer is not selected from a fixed option list.
 
-I replaced only the training transform with the augmented pipeline. The model and optimizer were not recreated.
+## Question 4 — baseline loss
+
+Calculate the population standard deviation of `train_loss` in
+`history_baseline.json` (for NumPy, use `np.std(values, ddof=0)`). Submit the
+value rounded to three decimal places. The grader accepts an absolute error of
+`0.02`.
+
+## Data augmentation
+
+Keep the same model and optimizer. Replace only the training transform with:
 
 ```python
 train_transform_augmented = transforms.Compose([
     transforms.Resize((200, 200), interpolation=transforms.InterpolationMode.BILINEAR),
-    transforms.RandomRotation(50, interpolation=transforms.InterpolationMode.NEAREST),
-    transforms.RandomResizedCrop(200, scale=(0.9, 1.0), ratio=(0.9, 1.1), interpolation=transforms.InterpolationMode.BILINEAR),
+    transforms.RandomRotation(
+        50,
+        interpolation=transforms.InterpolationMode.NEAREST,
+    ),
+    transforms.RandomResizedCrop(
+        200,
+        scale=(0.9, 1.0),
+        ratio=(0.9, 1.1),
+        interpolation=transforms.InterpolationMode.BILINEAR,
+    ),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+    ),
 ])
-
-augmented_train_dataset = datasets.ImageFolder(train_dir, transform=train_transform_augmented)
-augmented_loader_generator = torch.Generator().manual_seed(SEED + 1)
-
-augmented_train_loader = DataLoader(augmented_train_dataset, batch_size=20, shuffle=True, num_workers=0, generator=augmented_loader_generator)
-
-history_augmented = {"train_loss": [], "train_accuracy": [], "evaluation_loss": [], "evaluation_accuracy": []}
-
-for epoch in range(10):
-    model.train()
-    train_loss_sum, train_correct, train_total = 0.0, 0, 0
-    for images, labels in augmented_train_loader:
-        images, labels = images.to(device), labels.to(device)
-        labels = labels.float().unsqueeze(1)
-        optimizer.zero_grad()
-        logits = model(images)
-        loss = criterion(logits, labels)
-        loss.backward()
-        optimizer.step()
-        train_loss_sum += loss.item() * images.size(0)
-        train_correct += ((torch.sigmoid(logits) >= 0.5) == labels).sum().item()
-        train_total += labels.size(0)
-        
-    epoch_train_loss = train_loss_sum / train_total
-    epoch_train_acc = train_correct / train_total
-    epoch_eval_loss, epoch_eval_acc = evaluate(model, eval_loader, criterion, device)
-    
-    history_augmented["train_loss"].append(epoch_train_loss)
-    history_augmented["train_accuracy"].append(epoch_train_acc)
-    history_augmented["evaluation_loss"].append(epoch_eval_loss)
-    history_augmented["evaluation_accuracy"].append(epoch_eval_acc)
-    print(f"Epoch {epoch+1}/10 | Train Loss: {epoch_train_loss:.4f} | Train Acc: {epoch_train_acc:.4f} | Eval Loss: {epoch_eval_loss:.4f} | Eval Acc: {epoch_eval_acc:.4f}")
 ```
+
+Do not recreate the model or optimizer. Train for 10 additional epochs and
+write only those ten epochs to `history_augmented.json`. Continue using the
+unchanged, deterministic `evaluation_dataset` and `evaluation_loader` for
+every evaluation.
+
+## Question 5 — augmented evaluation loss
+
+Calculate the mean of `evaluation_loss` in `history_augmented.json`. Submit the
+value rounded to three decimal places. The grader accepts an absolute error of
+`0.02`.
+
+## Question 6 — augmented evaluation accuracy
+
+Calculate the mean of the last five values in `evaluation_accuracy` in
+`history_augmented.json` (epochs 6 through 10 of the augmented phase). Submit
+the value rounded to two decimal places. The grader accepts an absolute error
+of `0.05`.
+
+The tolerances cover minor CPU wheel differences, while the fixed seed, loader,
+split, architecture, and inference transform prevent the large uncontrolled
+variation from the 2025 exercise.
+
+## Learning in Public
+
+Share what you learned from this homework in a short post, screenshot, or
+training-curve plot. Use `#mlzoomcamp`, tag Alexey Grigorev or DataTalksClub,
+and submit the post link with your homework. Don't publish private images,
+credentials, or other secrets.
+
+See the [learning in public guide](https://datatalks.club/docs/courses/zoomcamp-logistics/learning-in-public/) for more
+ideas and examples.
+
+### Example post for LinkedIn
 
 ```text
-Epoch 1/10 | Train Loss: 0.6758 | Train Acc: 0.6050 | Eval Loss: 0.6552 | Eval Acc: 0.6716
-Epoch 2/10 | Train Loss: 0.6129 | Train Acc: 0.6475 | Eval Loss: 0.6608 | Eval Acc: 0.6269
-Epoch 3/10 | Train Loss: 0.5899 | Train Acc: 0.6800 | Eval Loss: 0.5787 | Eval Acc: 0.7114
-Epoch 4/10 | Train Loss: 0.5923 | Train Acc: 0.6750 | Eval Loss: 0.5679 | Eval Acc: 0.7114
-Epoch 5/10 | Train Loss: 0.5604 | Train Acc: 0.7137 | Eval Loss: 0.5680 | Eval Acc: 0.7214
-Epoch 6/10 | Train Loss: 0.5567 | Train Acc: 0.7075 | Eval Loss: 0.5510 | Eval Acc: 0.7015
-Epoch 7/10 | Train Loss: 0.5433 | Train Acc: 0.7000 | Eval Loss: 0.5291 | Eval Acc: 0.7413
-Epoch 8/10 | Train Loss: 0.5317 | Train Acc: 0.7288 | Eval Loss: 0.5458 | Eval Acc: 0.7065
-Epoch 9/10 | Train Loss: 0.5041 | Train Acc: 0.7562 | Eval Loss: 0.5557 | Eval Acc: 0.7214
-Epoch 10/10 | Train Loss: 0.5398 | Train Acc: 0.7050 | Eval Loss: 0.5462 | Eval Acc: 0.7313
+🚀 Completed Module 8 of Machine Learning Zoomcamp 2026!
+
+I trained an image classifier with a fixed PyTorch pipeline, recorded baseline
+metrics, and measured the effect of data augmentation on a deterministic
+evaluation set.
+
+My repo: <LINK>
+
+#mlzoomcamp @Alexey Grigorev
 ```
 
-### Question 5
-**Answer:** `0.576` (Mean of `evaluation_loss`)
+### Example post for X
 
-### Question 6
-**Answer:** `0.72` (Mean of last 5 `evaluation_accuracy`)
+```text
+Trained an image classifier in Module 8 of #mlzoomcamp.
 
-## Saving History Files
+✅ Fixed the seed and evaluation transform
+✅ Recorded baseline loss and accuracy
+✅ Compared training with data augmentation
 
-```python
-with open("history_baseline.json", "w") as f:
-    json.dump(history_baseline, f, indent=4)
-
-with open("history_augmented.json", "w") as f:
-    json.dump(history_augmented, f, indent=4)
+My repo: <LINK>
 ```
 
-## Summary of Answers
+## Submit the results
 
-| Question | Answer |
-| :--- | :--- |
-| **Q1. Loss Function** | `nn.BCEWithLogitsLoss()` |
-| **Q2. Parameter Count** | `20073473` |
-| **Q3. Baseline Accuracy** | `0.81` |
-| **Q4. Baseline Loss (Std)** | `0.139` |
-| **Q5. Augmented Eval Loss** | `0.576` |
-| **Q6. Augmented Eval Acc** | `0.72` |
+Submit the results here:
+<https://courses.datatalks.club/ml-zoomcamp-2026/homework/hw08>.
+
+Include the two history JSON files or a link to the notebook/script that
+produced them. Numeric answers must use the precision and tolerance stated in
+each question.
