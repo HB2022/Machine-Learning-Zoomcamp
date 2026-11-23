@@ -2,7 +2,7 @@
 
 **Cohort:** ML Zoomcamp 2026
 
-This repository contains my submission for Homework 8. I followed the instructions exactly, using the fixed dataset, environment, reproducibility rules, and reference architecture. All code below was executed interactively in the terminal.
+This file contains my submission for Homework 8. I followed the instructions exactly, using the fixed dataset, environment, reproducibility rules, and reference architecture. All code below was executed interactively in the terminal.
 
 ## Environment Setup
 
